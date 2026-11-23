@@ -432,17 +432,22 @@ Agree on coordinate conventions and contracts before parallel implementation. Sh
 
 ## Implementation roadmap
 
-| Milestone | Reviewable outcome |
-| --- | --- |
-| 0. Social source access spike | Verify board, pin, reel, carousel, and export access; document supported paths and test fallbacks |
-| 1. Project foundation | Sign in, create a project, upload a floor plan, set scale |
-| 2. Editable room | Trace walls and openings; render consistent 2D and 3D views |
-| 3. Furniture workflow | Place, drag, rotate, resize, undo, save, and reload |
-| 4. Social inspiration library | Import Pinterest boards and Instagram reels/posts through validated access paths; review frames, tag, filter, and search |
-| 5. Contextual review | Pin references to locations, add notes, and comment |
-| 6. Existing conditions | Add verified or estimated fixtures and inspect conflicts |
-| 7. Alternatives | Duplicate options, compare, checkpoint, and export project data |
-| 8. Assisted planning | Explore blueprint recognition and explainable reference recommendations |
+Build in eight phases. Phases 1–6 deliver a usable shared planning product; phases 7–8 add optional AI assistance. Existing measurements, layout editing, and deterministic constraint checks do not depend on AI.
+
+| Phase | Scope | Completion gate |
+| --- | --- | --- |
+| 1. Validate and agree | Test Pinterest/Instagram access paths; agree on coordinates, schemas, and the first-room fixture | Supported imports and fallbacks are documented; both developers use the same contracts |
+| 2. Foundation | Scaffold the monorepo, authentication, projects, database, storage, jobs, and CI | Both developers can run the project; an authorized user can upload and reopen a plan |
+| 3. Plan and inspiration tracks | In parallel, build manual 2D tracing and the social/media library with frame review and manual tags | A corrected room and reviewed inspiration survive save/reload; partial imports are visible |
+| 4. Interactive layouts | Build furniture manipulation, synchronized 3D, and a movable reference canvas | Furniture moves predictably in both views; references and notes can be arranged and restored |
+| 5. Contextual planning | Anchor references to spaces; map electrical points; add clearances and conflict checks | Users can connect an idea to a wall and understand real placement constraints |
+| 6. Shared beta | Add alternatives, comments, version conflicts, checkpoints, exports, and release hardening | Two users can review and revise without lost edits; the complete home-planning flow passes |
+| 7. AI inspiration assistance | Suggest room/style/material tags and distinct useful reel frames | Users can accept or correct suggestions; quality, processing time, and cost are evaluated |
+| 8. AI drafting and recommendations | Suggest blueprint geometry and reference-to-space design options | Suggestions remain editable drafts with evidence, verification, and constraint validation |
+
+**Developer A** leads geometry, the planner, and spatial interactions. **Developer B** leads the backend, imports, media library, and persistence. The plan and inspiration tracks run in parallel from phase 3; shared contracts and integration reviews continue throughout.
+
+See the [detailed phase plan](docs/architecture/implementation-phases.md) for deliverables, dependencies, ownership, and acceptance criteria. Each phase is complete only when its integrated workflow passes its gate; phase numbers are not delivery dates.
 
 **First end-to-end acceptance scenario:** Create a living room from a plan, correct a door, place two sofas and a TV unit, attach three references, identify a socket conflict, save an alternative layout, and reopen everything without losing state.
 

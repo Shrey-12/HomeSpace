@@ -4,6 +4,8 @@ A shared interior design workspace that connects your home's floor plan, editabl
 
 HomeSpace helps users turn a blueprint into a verified spatial model, arrange furniture, attach references to specific walls and spaces, and compare design options before committing to interiors.
 
+**Pinterest boards and Instagram reels, posts, and carousels are core inspiration sources.** Users should be able to bring their saved inspiration into the same searchable library and pin useful details to actual locations in their home.
+
 > **Status:** Planning stage. This repository currently contains the project design; the application, infrastructure, and commands described below have not been implemented. The technology stack and repository structure are proposed.
 
 ## Product workflow
@@ -25,7 +27,8 @@ The first release will support manual tracing and correction of floor plans. Aut
 - **Editable house model:** Scale a floor plan, trace irregular rooms, correct openings, and generate matching 2D and 3D views.
 - **Furniture planning:** Preview placement, drag, rotate, resize, snap to walls, enter dimensions, and undo changes.
 - **Existing-condition mapping:** Record electrical, plumbing, and AC points with source evidence and verification status.
-- **Reference organization:** Import images and videos; review distinct video frames; filter by tags, source, and decision status.
+- **Social inspiration imports:** Add Pinterest board/pin links and Instagram reel/post links, import supported account exports, and resolve unavailable media through user-assisted uploads.
+- **Reference organization:** Preserve source boards and collections, review distinct video frames and carousel slides, and filter by tags, source, and decision status.
 - **Contextual annotations:** Attach a reference or a specific detail within it to a room, wall, furniture item, or floor position.
 - **Design alternatives:** Duplicate layouts and compare arrangements without overwriting earlier options.
 - **Constraint checks:** Identify overlaps, obstructed openings, access problems, and height conflicts.
@@ -49,6 +52,7 @@ Photorealistic rendering, automatic reconstruction from walkthrough videos, and 
 | Database | PostgreSQL + Drizzle | Project data, geometry revisions, layouts, and migrations |
 | Media storage | S3-compatible object storage | Original uploads, extracted frames, and thumbnails |
 | Background jobs | pg-boss | PostgreSQL-backed queues, retries, and processing status |
+| Source connectors | Shared TypeScript adapter contracts | Pinterest, Instagram, account-export, and upload import flows |
 | Media processing | FFmpeg + Sharp | Video extraction, metadata, previews, and thumbnails |
 | Authentication | Managed OIDC-compatible provider; selection pending | Accounts, sessions, and identity verification |
 | Testing | Vitest + Playwright | Domain tests, API integration, and critical browser workflows |
@@ -71,6 +75,8 @@ flowchart LR
     Web -->|Load authorized media| Storage
     API -->|Enqueue jobs| Queue[pg-boss queue in PostgreSQL]
     Queue --> Worker[Media processing worker]
+    Worker --> Connectors[Source connector adapters]
+    Connectors --> Providers[Pinterest and Instagram]
     Worker --> Storage
     Worker -->|Metadata and results| DB
     Web -->|Poll job status initially| API
@@ -165,6 +171,26 @@ classDiagram
         +string adaptationNote
         +string status
     }
+    class SourceCollection {
+        +UUID id
+        +string provider
+        +string externalId
+        +string title
+        +string canonicalUrl
+    }
+    class SourceItem {
+        +UUID id
+        +string provider
+        +string externalId
+        +string canonicalUrl
+        +string availability
+    }
+    class ImportRun {
+        +UUID id
+        +string status
+        +string cursor
+        +JSON itemCounts
+    }
 
     Project "1" --> "0..*" Floor : contains
     Floor "1" --> "1..*" FloorRevision : versions
@@ -179,12 +205,17 @@ classDiagram
     ServiceProposal "0..*" --> "1" ExistingFixture : proposes change to
     Project "1" --> "0..*" MediaAsset : owns
     Project "1" --> "0..*" ReferenceItem : collects
-    ReferenceItem "0..*" --> "1" MediaAsset : displays
+    ReferenceItem "0..*" --> "0..1" MediaAsset : displays
     DesignOption "1" *-- "0..*" ReferencePin
     ReferencePin "0..*" --> "1" ReferenceItem : uses
+    Project "1" --> "0..*" SourceCollection : imports
+    Project "1" --> "0..*" SourceItem : tracks
+    Project "1" --> "0..*" ImportRun : records
+    SourceCollection "0..*" --> "0..*" SourceItem : groups
+    SourceItem "0..1" --> "0..*" ReferenceItem : yields
 ```
 
-Additional persistence records include project memberships, tag assignments, boards and board items, comments, decisions, activity events, and named checkpoints. Derived assets retain their original asset ID for provenance.
+Additional persistence records include project memberships, source collection memberships, per-item import results, provider connections, tag assignments, boards and board items, comments, decisions, activity events, and named checkpoints. Derived assets retain their original asset ID for provenance. A source item can yield multiple reference items, such as reel frames or carousel slides. Link-only references may have no local media asset and must be labelled accordingly.
 
 ## Spatial and versioning rules
 
@@ -246,15 +277,85 @@ Provide visible **Saving**, **Saved**, **Offline**, and **Conflict** states, und
 
 ## Inspiration and media pipeline
 
-**Upload → validate → extract metadata → generate previews → select candidate frames → review → tag → publish to library.**
+**Add source → discover items → acquire available media → extract useful views → review → tag → publish → pin to the house.**
 
-- Start with image/video uploads and user-provided exports. Evaluate Pinterest and Instagram integrations against their available access methods before committing to automated imports.
-- Preserve original uploads and source links. Extracted frames retain timestamps and parent asset IDs.
-- Use scene changes and perceptual similarity to suggest distinct frames. A house tour and a single-room pan should produce different numbers of candidates.
-- Let users scrub videos, capture additional frames, recover rejected images, and confirm import completeness.
-- Make suggested tags editable. Track tag author, confidence, and whether a user has confirmed them.
-- Begin search with text and filters for room, style, material, element, source, and status. Semantic search is a later extension.
-- Give jobs progress, cancellation, bounded retries, and per-item failure results.
+### Supported source experiences
+
+| Input | Intended import experience | Required fallback |
+| --- | --- | --- |
+| Pinterest board URL, including short links | Resolve the board, discover accessible pins, and preserve board title and pin sources | Import available items; identify missing items and accept exports or uploads |
+| Pinterest pin URL | Create a reference with accessible image/video media and source metadata | Keep a labelled link-only item when media cannot be acquired |
+| Instagram reel URL | Preserve caption and creator attribution, acquire accessible video, and extract distinct interior views | Ask for a user-provided video when only metadata or an embed is available |
+| Instagram post/carousel URL | Preserve post identity, accessible media, and slide ordering | Report partial slide coverage and accept missing images as uploads |
+| Account export or saved-item list | Parse supported formats, preview named boards/collections, and let the user choose what to import | Treat exported URLs as sources to resolve; an export may not contain the underlying media |
+| Uploaded images and videos | Process user-provided media directly, optionally linked to an existing social source | Keep unsupported files visible with an actionable error |
+
+Direct URL entry belongs in the first-release interface. Full media acquisition depends on the provider's available APIs, account permissions, and content access. A public link or successful embed does not guarantee downloadable media. Support should be verified through an early integration spike, and published capability limits should reflect what has actually been tested.
+
+Use provider-supported APIs and authorization where available. Consumer saved collections and private boards may require exports or user-assisted uploads; do not assume account connection grants access to every saved item. Keep provider connection credentials encrypted and separate from application login. Users should not need to submit social passwords or session cookies.
+
+### Importer architecture
+
+Define a connector contract for URL resolution, capability reporting, paginated item discovery, metadata retrieval, and permitted media acquisition. Each connector reports which operations are available for a particular source. Export-file and direct-upload importers feed the same downstream pipeline.
+
+Separate discovery from media acquisition: knowing that a reel exists is different from having its video available for analysis. Store a durable `SourceItem` before media processing so inaccessible items remain reviewable.
+
+Each import run should record:
+
+- The project, requesting user, source, selected collection, and access method.
+- The persisted pagination cursor and per-item progress for resumable imports.
+- Counts for discovered, imported, duplicate, link-only, unavailable, failed, and awaiting-action items.
+- Provider-reported totals when available, with an explicit unknown-total state otherwise.
+- Whether all source pages/slides were traversed, plus any configured limits or interrupted discovery.
+
+Use statuses such as `queued`, `discovering`, `processing`, `awaiting_user_action`, `completed`, `partial`, `failed`, and `cancelled`. Respect provider rate limits and retry guidance. Retries should resume failed work without duplicating successful items.
+
+Within a project, deduplicate source items using provider identity and external ID, with canonical URL fallback. Track source collection membership separately so one pin can belong to multiple imported boards. Use content hashes for identical media and perceptual similarity to suggest near duplicates; preserve provenance when grouping them.
+
+Reimporting a source should add newly discovered items and update availability while preserving local tags, notes, shortlists, and spatial pins. An item disappearing remotely must not silently remove planning work. Store acquired media when permitted and available; remote media URLs can expire.
+
+### Social import flow: UML sequence diagram
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Web as Import interface
+    participant API as API
+    participant Worker as Import worker
+    participant Source as Provider connector
+    participant Library as Project library
+
+    User->>Web: Paste board, reel, or post URL
+    Web->>API: Create import with idempotency key
+    API-->>Web: Import ID and queued status
+    API->>Worker: Enqueue import
+    Worker->>Source: Resolve source and discover accessible items
+    Source-->>Worker: Metadata, capabilities, and item cursor
+    loop Each discovered item
+        Worker->>Source: Request available media
+        alt Media accessible
+            Source-->>Worker: Images or video
+            Worker->>Library: Save media and candidate frames or slides
+        else Media unavailable
+            Worker->>Library: Save link-only item and required action
+        end
+    end
+    Web->>API: Read import progress and results
+    API-->>Web: Counts, completeness, and items needing attention
+    User->>Web: Review frames or supply missing media
+    Web->>API: Confirm selected references
+    API->>Library: Publish selections for tagging and pinning
+```
+
+### Frame selection and contextual organization
+
+- Preserve original media, source URLs, creator attribution, captions, collection membership, and import timestamps. Extracted frames retain source timestamps and parent asset IDs; carousel slides retain their indices.
+- Use scene changes, image quality, and perceptual similarity to suggest distinct frames. A whole-house tour should retain different spaces; a kitchen pan should collapse repetitive views. Avoid fixed frame counts or silent carousel truncation.
+- Let users scrub videos, capture additional frames, recover rejected images, and confirm import completeness. Show processing progress and per-item failures.
+- Keep each reel/post as a parent group so users can trace a crop or frame back to its original context.
+- Suggest room, style, material, and element tags, then let users correct them. Track tag author, confidence, and confirmation status. Provider metadata can be imported immediately; visual tagging requires a separately selected analysis model or service.
+- Search and filter by source board/collection, creator, room, style, material, element, and decision status. Semantic search is a later extension.
+- Offer reviewed references for wall and room pinning with adaptation notes. Keep manual approval before changing layouts.
 
 Reference pins support room, wall, furniture, and free-position anchors. Image markup uses normalized image coordinates so crops and callouts survive thumbnail resizing. If an anchor is removed or invalidated, flag the pin for review.
 
@@ -280,6 +381,12 @@ Client checks provide immediate feedback; server checks validate committed chang
 | `POST /assets/upload-url` | Request a signed upload URL |
 | `POST /assets/:id/complete` | Verify upload and schedule processing |
 | `GET /jobs/:id` | Read processing progress |
+| `POST /projects/:id/imports` | Start a URL, export-file, or uploaded-media import |
+| `GET /imports/:id` | Read source coverage, progress, and item results |
+| `POST /imports/:id/retry` | Resume retryable or newly resolved items |
+| `POST /imports/:id/cancel` | Cancel outstanding work |
+| `POST /source-items/:id/media` | Attach user-provided media to an unresolved source |
+| `POST /source-collections/:id/refresh` | Reimport without discarding local planning work |
 | `GET /projects/:id/references` | Search and filter references |
 | `POST /reference-pins` | Attach inspiration to a location |
 | `POST /comments` | Add an anchored comment or reply |
@@ -296,6 +403,7 @@ apps/
   worker/               # Media processing and background jobs
 packages/
   contracts/            # Shared schemas and API types
+  importers/            # Provider, export-file, and upload connector contracts
   geometry/             # Coordinate transforms and spatial calculations
   constraints/          # Placement and clearance checks
   database/             # Drizzle schema, migrations, and queries
@@ -315,7 +423,7 @@ Split ownership by feature area while reviewing shared contracts together. Each 
 | Foundation | Web shell, editor state, coordinates | API, auth, database, storage |
 | House model | Geometry, tracing, openings | Persistence and geometry revisions |
 | Planner | 2D/3D, furniture manipulation | Catalogue and layout APIs |
-| Inspiration | Spatial pins and annotation interactions | Media pipeline, library, search, canvas |
+| Inspiration | Spatial pins, frame review, and annotation interactions | Pinterest/Instagram adapters, imports, library, search, canvas |
 | Validation | Geometry and constraint calculations | Server integration and issue persistence |
 | Collaboration | Save states and conflict resolution UI | Membership, comments, version checks |
 | Delivery | Planner browser workflows | CI, deployment, monitoring, workers |
@@ -326,10 +434,11 @@ Agree on coordinate conventions and contracts before parallel implementation. Sh
 
 | Milestone | Reviewable outcome |
 | --- | --- |
+| 0. Social source access spike | Verify board, pin, reel, carousel, and export access; document supported paths and test fallbacks |
 | 1. Project foundation | Sign in, create a project, upload a floor plan, set scale |
 | 2. Editable room | Trace walls and openings; render consistent 2D and 3D views |
 | 3. Furniture workflow | Place, drag, rotate, resize, undo, save, and reload |
-| 4. Inspiration library | Import media, review frames, tag, filter, and search |
+| 4. Social inspiration library | Import Pinterest boards and Instagram reels/posts through validated access paths; review frames, tag, filter, and search |
 | 5. Contextual review | Pin references to locations, add notes, and comment |
 | 6. Existing conditions | Add verified or estimated fixtures and inspect conflicts |
 | 7. Alternatives | Duplicate options, compare, checkpoint, and export project data |
@@ -337,14 +446,18 @@ Agree on coordinate conventions and contracts before parallel implementation. Sh
 
 **First end-to-end acceptance scenario:** Create a living room from a plan, correct a door, place two sofas and a TV unit, attach three references, identify a socket conflict, save an alternative layout, and reopen everything without losing state.
 
+**Social import acceptance scenario:** Import a Pinterest board and an Instagram house-tour reel through supported access paths. Review source completeness, retain distinct room views, tag them, and pin a chosen detail to the living room. Reimport without duplicates or lost notes. Verify the fallback workflow for a private/deleted post or an export containing only links, and visibly report a partially available carousel.
+
 ## Quality, security, and operations
 
 - Test geometry transforms, rotated footprints, snapping, opening clearances, and height-sensitive conflicts with Vitest.
 - Test authorization, version conflicts, persistence, and job transitions against PostgreSQL.
+- Test provider adapters with sanitized recorded fixtures, including pagination, short-link resolution, expired media, authentication failures, rate limits, duplicate retries, and partial carousel results. Keep live provider checks separate from deterministic CI tests.
 - Use Playwright for the first acceptance scenario, save/reload behavior, and recovery from failed requests.
 - Run type checks, linting, tests, and builds in CI once the application is scaffolded.
 - Keep the 2D plan and project data accessible if the 3D renderer fails. Add error boundaries and actionable error messages.
 - Keep media private, use signed URLs, validate uploads, and bound worker execution time and resource usage.
+- Validate source URLs and every redirect; block internal-network destinations. Authorize access to imported private content per project and keep provider credentials out of logs and exports.
 - Store secrets outside version control. Add structured logs, browser error reporting, job failure reporting, and database backups with restore verification.
 
 ## Local development
@@ -353,4 +466,4 @@ Setup commands will be added with the initial scaffold. There are currently no a
 
 Expected prerequisites are a supported Node.js LTS release, pnpm, PostgreSQL, S3-compatible storage, and FFmpeg for the media worker. Planned local services can run through Docker Compose.
 
-Before scaffolding, confirm the authentication provider, hosting target, environment configuration, and initial furniture catalogue format.
+Before scaffolding, confirm the authentication provider, hosting target, environment configuration, initial furniture catalogue format, and tested Pinterest/Instagram import capabilities and access requirements.

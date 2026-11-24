@@ -155,12 +155,18 @@ export function createApp({ config, db, storage }: AppDependencies): FastifyInst
         error: { code: "validation_error", message: "Request validation failed.", details: error.flatten() },
       });
     }
-    if (error.statusCode && error.statusCode < 500) {
-      return reply.code(error.statusCode).send({
-        error: { code: error.code ?? "request_error", message: error.message },
-      });
+    if (typeof error === "object" && error !== null) {
+      const requestError = error as { statusCode?: unknown; code?: unknown; message?: unknown };
+      if (typeof requestError.statusCode === "number" && requestError.statusCode < 500) {
+        return reply.code(requestError.statusCode).send({
+          error: {
+            code: typeof requestError.code === "string" ? requestError.code : "request_error",
+            message: typeof requestError.message === "string" ? requestError.message : "The request could not be processed.",
+          },
+        });
+      }
     }
-    app.log.error(error);
+    app.log.error({ err: error });
     return reply.code(500).send({ error: { code: "internal_error", message: "An unexpected error occurred." } });
   });
 

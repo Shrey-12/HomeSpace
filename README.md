@@ -6,7 +6,7 @@ HomeSpace helps users turn a blueprint into a verified spatial model, arrange fu
 
 **Pinterest boards and Instagram reels, posts, and carousels are core inspiration sources.** Users should be able to bring their saved inspiration into the same searchable library and pin useful details to actual locations in their home.
 
-> **Status:** Planning stage. This repository currently contains the project design; the application, infrastructure, and commands described below have not been implemented. The technology stack and repository structure are proposed.
+> **Status:** Backend foundation implementation has started. The API, Auth0 token verification, internal user identity mapping, initial PostgreSQL schema, S3-compatible upload flow, and pg-boss worker for upload verification are scaffolded. The web application, social imports, media extraction, and design workspaces are not implemented yet; the rest of this document remains the product and technical design.
 
 ## Product workflow
 
@@ -54,11 +54,11 @@ Photorealistic rendering, automatic reconstruction from walkthrough videos, and 
 | Background jobs | pg-boss | PostgreSQL-backed queues, retries, and processing status |
 | Source connectors | Shared TypeScript adapter contracts | Pinterest, Instagram, account-export, and upload import flows |
 | Media processing | FFmpeg + Sharp | Video extraction, metadata, previews, and thumbnails |
-| Authentication | Managed OIDC-compatible provider; selection pending | Accounts, sessions, and identity verification |
+| Authentication | Auth0 using OIDC | Accounts, sessions, and identity verification |
 | Testing | Vitest + Playwright | Domain tests, API integration, and critical browser workflows |
 | CI | GitHub Actions | Type checks, tests, linting, and build verification |
 
-Specific versions will be pinned when implementation begins. Hosting, authentication provider, and deployment configuration remain decisions to make before the first shared environment.
+Workspace dependency ranges are declared in package manifests; a pnpm lockfile should be generated and committed with the first dependency installation. Hosting and deployment configuration remain decisions to make before the first shared environment.
 
 ## System architecture
 
@@ -90,6 +90,19 @@ This diagram describes domain relationships. Rooms, walls, openings, and existin
 
 ```mermaid
 classDiagram
+    class User {
+        +UUID id
+    }
+    class ExternalIdentity {
+        +UUID id
+        +string issuer
+        +string subject
+    }
+    class ProjectMembership {
+        +UUID projectId
+        +UUID userId
+        +string role
+    }
     class Project {
         +UUID id
         +string name
@@ -192,6 +205,10 @@ classDiagram
         +JSON itemCounts
     }
 
+    User "1" --> "0..*" ExternalIdentity : signs in through
+    User "1" --> "0..*" ProjectMembership : has access
+    Project "1" --> "0..*" ProjectMembership : grants access
+    User "1" --> "0..*" Project : owns
     Project "1" --> "0..*" Floor : contains
     Floor "1" --> "1..*" FloorRevision : versions
     FloorRevision "1" *-- "0..*" Room
@@ -215,7 +232,7 @@ classDiagram
     SourceItem "0..1" --> "0..*" ReferenceItem : yields
 ```
 
-Additional persistence records include project memberships, source collection memberships, per-item import results, provider connections, tag assignments, boards and board items, comments, decisions, activity events, and named checkpoints. Derived assets retain their original asset ID for provenance. A source item can yield multiple reference items, such as reel frames or carousel slides. Link-only references may have no local media asset and must be labelled accordingly.
+Additional planned persistence records include source collection memberships, per-item import results, provider connections, tag assignments, boards and board items, comments, decisions, activity events, and named checkpoints. Derived assets retain their original asset ID for provenance. A source item can yield multiple reference items, such as reel frames or carousel slides. Link-only references may have no local media asset and must be labelled accordingly.
 
 ## Spatial and versioning rules
 
@@ -372,14 +389,17 @@ Client checks provide immediate feedback; server checks validate committed chang
 | Method and route | Purpose |
 | --- | --- |
 | `POST /projects` | Create a project |
+| `GET /projects` | List projects available to the signed-in user |
 | `GET /projects/:id` | Read project metadata and access information |
+| `GET /projects/:id/assets` | List project uploads |
 | `POST /floors/:id/revisions` | Save a building revision |
 | `POST /design-options` | Create or duplicate an option |
 | `GET /design-options/:id` | Load a layout and its annotations |
 | `PATCH /furniture/:id` | Update dimensions or placement |
 | `POST /design-options/:id/validate` | Run constraint checks |
-| `POST /assets/upload-url` | Request a signed upload URL |
-| `POST /assets/:id/complete` | Verify upload and schedule processing |
+| `POST /projects/:id/assets/upload-url` | Request a signed upload URL |
+| `POST /assets/:id/complete` | Queue upload verification |
+| `GET /assets/:id/download-url` | Request a short-lived signed read URL |
 | `GET /jobs/:id` | Read processing progress |
 | `POST /projects/:id/imports` | Start a URL, export-file, or uploaded-media import |
 | `GET /imports/:id` | Read source coverage, progress, and item results |
@@ -459,7 +479,7 @@ See the [detailed phase plan](docs/architecture/implementation-phases.md) for de
 - Test authorization, version conflicts, persistence, and job transitions against PostgreSQL.
 - Test provider adapters with sanitized recorded fixtures, including pagination, short-link resolution, expired media, authentication failures, rate limits, duplicate retries, and partial carousel results. Keep live provider checks separate from deterministic CI tests.
 - Use Playwright for the first acceptance scenario, save/reload behavior, and recovery from failed requests.
-- Run type checks, linting, tests, and builds in CI once the application is scaffolded.
+- Add GitHub Actions CI for type checks, linting, tests, and builds. The workflow is not configured yet.
 - Keep the 2D plan and project data accessible if the 3D renderer fails. Add error boundaries and actionable error messages.
 - Keep media private, use signed URLs, validate uploads, and bound worker execution time and resource usage.
 - Validate source URLs and every redirect; block internal-network destinations. Authorize access to imported private content per project and keep provider credentials out of logs and exports.
@@ -467,8 +487,19 @@ See the [detailed phase plan](docs/architecture/implementation-phases.md) for de
 
 ## Local development
 
-Setup commands will be added with the initial scaffold. There are currently no application scripts or services to run.
+The initial API foundation uses Node.js, pnpm, PostgreSQL, and MinIO for local object storage. Copy `.env.example` to `.env` and set the Auth0 tenant domain and API audience. Configure an Auth0 Single Page Application and API as described in [the backend foundation guide](docs/architecture/backend-foundation.md), then run:
 
-Expected prerequisites are a supported Node.js LTS release, pnpm, PostgreSQL, S3-compatible storage, and FFmpeg for the media worker. Planned local services can run through Docker Compose.
+```sh
+pnpm install
+docker compose up -d
+pnpm db:migrate
+pnpm dev:api
+```
 
-Before scaffolding, confirm the authentication provider, hosting target, environment configuration, initial furniture catalogue format, and tested Pinterest/Instagram import capabilities and access requirements.
+In another terminal, run `pnpm dev:worker` to process upload-verification jobs.
+
+The API listens on port 3001 by default. `GET /health` is public; project and asset routes require an Auth0 bearer access token issued for the configured API audience. Uploads go directly to private object storage using short-lived signed URLs. The API provisions an internal HomeSpace user the first time a valid Auth0 identity is seen; local authenticated requests require a token from the configured Auth0 tenant.
+
+Expected prerequisites are a supported Node.js LTS release, pnpm, Docker Compose, PostgreSQL, and S3-compatible storage. FFmpeg will be needed when media extraction is implemented. The local Compose file starts PostgreSQL and MinIO.
+
+Before setting up a shared environment, configure the Auth0 tenant, decide the hosting target and production environment, agree on the initial furniture catalogue format, and validate Pinterest/Instagram import capabilities and access requirements.

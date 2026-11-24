@@ -1,0 +1,28 @@
+{
+  "name": "@homespace/worker",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "predev": "pnpm --filter @homespace/database build",
+    "prebuild": "pnpm --filter @homespace/database build",
+    "pretypecheck": "pnpm --filter @homespace/database build",
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.758.0",
+    "@homespace/database": "workspace:*",
+    "dotenv": "^16.4.7",
+    "drizzle-orm": "^0.38.4",
+    "pg-boss": "^10.3.2",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
+  }
+}

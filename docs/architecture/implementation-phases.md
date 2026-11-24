@@ -1,6 +1,6 @@
 # HomeSpace implementation phases
 
-This is an implementation plan for two developers. All phases are planned; the application has not been scaffolded. Phases 1–6 form the first shared beta. AI is introduced in phases 7–8 after the core workflows are reliable.
+This is an implementation plan for two developers. Backend foundation work for phase 2 is underway: the API, Auth0 token verification, internal identity mapping, initial database migration, private uploads, and upload-verification worker have been scaffolded. Phase 1 is still open for social-source access validation and shared contracts. The phase 2 completion gate has not been met; the web application, Auth0 tenant/client configuration, CI workflow, and reproducible dependency lockfile are still outstanding. Phases 1–6 form the first shared beta. AI is introduced in phases 7–8 after the core workflows are reliable.
 
 The product and technical design are documented in the [README](../../README.md).
 
